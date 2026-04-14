@@ -28,13 +28,15 @@ Keep this backup until you are satisfied with the results.
 
 ### Filters and hidden rows or columns
 
-If any of the Keys, Companies, or Censuses sheets have a filter applied or have hidden rows or columns, **the script will remove the filter and unhide everything automatically** before reading the data. This is necessary to ensure no rows are silently skipped.
+If the **Companies** or **Censuses** sheets have a filter applied or have hidden rows or columns, **the script will remove the filter and unhide everything automatically** before reading the data. This is necessary to ensure no rows are silently skipped.
 
 Be aware of two consequences:
-- **Filters will not be restored** on the rewritten sheets after the script runs.
+- **Filters on Companies and Censuses will not be restored** on the rewritten sheets after the script runs.
 - **All previously hidden rows will be visible** in the resulting sheets.
 
 If you need your filters preserved, note them down before running so you can reapply them afterwards.
+
+The **Keys** sheet filter is left in place — the script reads Keys without removing its filter, and never rewrites it.
 
 ---
 
@@ -113,8 +115,10 @@ Quality check
   Result             : PASS
 ```
 
-- **PASS** means the total row count is consistent — no rows were created or lost.
+- **PASS** means the total populated row count is consistent — no data rows were created or lost.
 - **FAIL** means something unexpected happened. Do not save or close the file. Check the original backup and contact whoever set up the script.
+
+The script also runs an independent integrity check before touching any data. If the number of rows returned by the API does not match what the sheet reports, the script stops immediately and displays an error. In that case nothing will have been modified.
 
 ---
 

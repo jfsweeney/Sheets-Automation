@@ -17,10 +17,11 @@
  *
  * Filters and hidden rows/columns
  * --------------------------------
- * Before processing each sheet the script removes any active filter and
- * unhides all rows and columns. This ensures the full dataset is read and
- * written — not just what is currently visible. Filters will not be present
- * on the rewritten sheets after the script completes.
+ * Before processing, the script removes any active filter from "Companies"
+ * and "Censuses" and unhides all rows and columns on those sheets. This
+ * ensures the full dataset is read and written — nothing is silently skipped.
+ * Filters on "Companies" and "Censuses" will not be present after the script
+ * completes. The "Keys" sheet filter is left in place.
  *
  * Output
  * ------
@@ -32,7 +33,10 @@
  *
  * Quality check
  * -------------
- *   An alert reports total data-row counts before and after; they must match.
+ *   An alert reports total populated data-row counts before and after.
+ *   The counts must match. An independent cross-check also verifies that
+ *   the number of rows returned by the API matches getLastRow() on each
+ *   sheet; a mismatch aborts the script before any data is modified.
  *
  * How to run
  * ----------
@@ -58,6 +62,7 @@ function splitSheetsByKey() {
     'This script clears and rewrites the "Companies" and "Censuses" sheets. ' +
     'If it is interrupted after clearing but before writing back, data in ' +
     'those sheets will be lost. There is no undo.\n\n' +
+    'Note: any filters on "Companies" and "Censuses" will be permanently removed.\n\n' +
     'Have you made a backup? Continue?',
     ui.ButtonSet.YES_NO
   );
@@ -73,8 +78,11 @@ function splitSheetsByKey() {
     return;
   }
 
-  // Reveal all rows in the Keys sheet so hidden keys are not silently missed.
-  fullyRevealSheet(keysSheet);
+  // Unhide any manually hidden rows/columns in Keys so no key is missed.
+  // We do not remove the Keys filter: the sheet is never rewritten, and
+  // getValues() returns all rows regardless of filter state.
+  keysSheet.showRows(1, keysSheet.getMaxRows());
+  keysSheet.showColumns(1, keysSheet.getMaxColumns());
 
   const keysRaw = keysSheet.getDataRange().getValues();
   const keySet  = new Set();
@@ -100,35 +108,43 @@ function splitSheetsByKey() {
   if (!censusesSheet)  { ui.alert('Error: Sheet named "Censuses" not found.');  return; }
 
   // ── 3. Remove filters and unhide everything in source sheets ─────────────────
-  // Filters or hidden rows/columns cause getDataRange() to return an incomplete
-  // dataset. Revealing everything now means the full data is read, partitioned,
-  // and written back — nothing is silently skipped or lost.
   fullyRevealSheet(companiesSheet);
   fullyRevealSheet(censusesSheet);
 
-  // ── 4. Create extract sheets (replace if they already exist) ─────────────────
-  const companiesExtract = prepareExtractSheet(ss, 'Companies Extract');
-  const censusesExtract  = prepareExtractSheet(ss, 'Censuses Extract');
+  // ── 4. Read and partition both sheets in memory (no writes yet) ──────────────
+  // All reading and partitioning is completed before any sheet is cleared or
+  // written. If anything goes wrong during the read (e.g. a row-count mismatch
+  // that suggests the data was not fully returned), the script aborts here and
+  // no data is modified.
+  let companiesPartition, censusesPartition;
+  try {
+    companiesPartition = partitionSheet(companiesSheet, keySet);
+    censusesPartition  = partitionSheet(censusesSheet,  keySet);
+  } catch (e) {
+    ui.alert('Error reading data — no data has been modified.\n\n' + e.message);
+    return;
+  }
 
-  // ── 5. Process each source sheet ────────────────────────────────────────────
-  const companiesStats = extractRows(companiesSheet, keySet, companiesExtract);
-  const censusesStats  = extractRows(censusesSheet,  keySet, censusesExtract);
+  // ── 5. Write all results ─────────────────────────────────────────────────────
+  // ─── Point of no return ───────────────────────────────────────────────────
+  applyPartition(ss, companiesSheet, companiesPartition, 'Companies Extract');
+  applyPartition(ss, censusesSheet,  censusesPartition,  'Censuses Extract');
 
   // ── 6. Quality check and summary ────────────────────────────────────────────
-  const totalBefore = companiesStats.before + censusesStats.before;
-  const totalAfter  = companiesStats.kept   + companiesStats.extracted +
-                      censusesStats.kept    + censusesStats.extracted;
+  const totalBefore = companiesPartition.before + censusesPartition.before;
+  const totalAfter  = companiesPartition.kept   + companiesPartition.extracted +
+                      censusesPartition.kept    + censusesPartition.extracted;
   const pass = totalBefore === totalAfter;
 
   const summary =
     'Split complete.\n\n' +
     'Companies\n' +
-    '  Remaining in sheet : ' + companiesStats.kept      + '\n' +
-    '  Moved to extract   : ' + companiesStats.extracted + '\n\n' +
+    '  Remaining in sheet : ' + companiesPartition.kept      + '\n' +
+    '  Moved to extract   : ' + companiesPartition.extracted + '\n\n' +
     'Censuses\n' +
-    '  Remaining in sheet : ' + censusesStats.kept       + '\n' +
-    '  Moved to extract   : ' + censusesStats.extracted  + '\n\n' +
-    'Quality check\n' +
+    '  Remaining in sheet : ' + censusesPartition.kept       + '\n' +
+    '  Moved to extract   : ' + censusesPartition.extracted  + '\n\n' +
+    'Quality check (populated rows)\n' +
     '  Total rows before  : ' + totalBefore + '\n' +
     '  Total rows after   : ' + totalAfter  + '\n' +
     '  Result             : ' + (pass ? 'PASS' : 'FAIL – do NOT save; investigate first!');
@@ -142,14 +158,14 @@ function splitSheetsByKey() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Removes any active filter and shows all hidden rows and columns on a sheet.
+ * Removes any active basic filter and shows all hidden rows and columns.
+ * Called only on source sheets that will be fully rewritten.
  *
- * Filters and hidden rows/columns cause getDataRange().getValues() to return
- * an incomplete dataset on some Google Sheets versions. Revealing everything
- * before reading guarantees the script works on the full data.
- *
- * Note: filters are not restored after the script runs. The rewritten source
- * sheets will have no filter applied.
+ * Note: sheet.getFilter() handles only basic filters (Data > Create a filter).
+ * Filter views (Data > Filter views) are a separate feature and are not
+ * removed here. This is safe because filter views are display-only — the
+ * getValues() API always returns the full dataset regardless of which filter
+ * view is active.
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
  */
@@ -165,6 +181,120 @@ function fullyRevealSheet(sheet) {
 }
 
 /**
+ * Reads all data from sourceSheet and partitions it into rows to keep and
+ * rows to extract. No data is written at this stage.
+ *
+ * Cross-check: compares getLastRow() against the row count returned by
+ * getDataRange().getValues(). These use different internal paths; a mismatch
+ * suggests the data was not fully returned and the script throws rather than
+ * risk silent data loss.
+ *
+ * Only populated rows (at least one non-empty cell) are counted in the
+ * before/kept/extracted statistics. Fully-empty rows are preserved in
+ * keepRows so they survive in the source sheet, but are not counted.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sourceSheet
+ * @param {Set<string>}                        keySet
+ * @returns {{ header, keepRows, extRows, before, kept, extracted }}
+ */
+function partitionSheet(sourceSheet, keySet) {
+  const lastRow = sourceSheet.getLastRow();
+
+  // Completely empty sheet — nothing to partition.
+  if (lastRow === 0) {
+    Logger.log(sourceSheet.getName() + ': sheet is completely empty.');
+    return { header: [], keepRows: [], extRows: [], before: 0, kept: 0, extracted: 0 };
+  }
+
+  const allData = sourceSheet.getDataRange().getValues();
+
+  // Cross-check: getLastRow() and getDataRange() must agree after fullyRevealSheet().
+  // A mismatch here means the API did not return a complete dataset — abort
+  // before touching anything.
+  if (allData.length !== lastRow) {
+    throw new Error(
+      sourceSheet.getName() + ': row count mismatch after unhiding — ' +
+      'getLastRow() reports ' + lastRow + ' rows but getDataRange() returned ' +
+      allData.length + '. This may indicate a filter or display issue.'
+    );
+  }
+
+  // Header-only sheet — nothing to partition, but preserve the header.
+  if (allData.length <= 1) {
+    const header = allData[0];
+    Logger.log(sourceSheet.getName() + ': no data rows, nothing to do.');
+    return { header, keepRows: [header], extRows: [header], before: 0, kept: 0, extracted: 0 };
+  }
+
+  const header   = allData[0];
+  const keepRows = [header];
+  const extRows  = [header];
+  let before = 0, kept = 0, extracted = 0;
+
+  for (let i = 1; i < allData.length; i++) {
+    const row = allData[i];
+
+    // Fully-empty rows are preserved in the source sheet but not counted
+    // in the quality check, as they contain no populated data.
+    if (row.every(cell => cell === '' || cell === null || cell === undefined)) {
+      keepRows.push(row);
+      continue;
+    }
+
+    before++;
+    const key = normaliseKey(row[0]);
+
+    // Populated rows with no Company ID are kept in the source sheet.
+    if (key === '') {
+      keepRows.push(row);
+      kept++;
+      continue;
+    }
+
+    if (keySet.has(key)) {
+      extRows.push(row);
+      extracted++;
+    } else {
+      keepRows.push(row);
+      kept++;
+    }
+  }
+
+  Logger.log(sourceSheet.getName() + ': before=' + before +
+             ', kept=' + kept + ', extracted=' + extracted);
+
+  return { header, keepRows, extRows, before, kept, extracted };
+}
+
+/**
+ * Writes a completed partition to the spreadsheet:
+ *   - Creates (or replaces) the named extract sheet and fills it with extRows.
+ *   - Clears the source sheet and writes back only the kept rows.
+ *
+ * This is called only after both source sheets have been successfully
+ * partitioned in memory.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet}  ss
+ * @param {GoogleAppsScript.Spreadsheet.Sheet}        sourceSheet
+ * @param {{ header, keepRows, extRows }}              partition
+ * @param {string}                                     extractName
+ */
+function applyPartition(ss, sourceSheet, partition, extractName) {
+  const { header, keepRows, extRows } = partition;
+
+  // Nothing to write for a completely empty sheet.
+  if (!header || header.length === 0) return;
+
+  const extSheet = prepareExtractSheet(ss, extractName);
+  extSheet.getRange(1, 1, extRows.length, header.length).setValues(extRows);
+
+  // clear() removes content and formatting so no ghost data lingers after
+  // the row count shrinks.
+  sourceSheet.clear();
+  sourceSheet.getRange(1, 1, keepRows.length, header.length).setValues(keepRows);
+}
+
+/**
  * Deletes any existing sheet with the given name and creates a fresh one.
  *
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss
@@ -175,67 +305,6 @@ function prepareExtractSheet(ss, name) {
   const existing = ss.getSheetByName(name);
   if (existing) ss.deleteSheet(existing);
   return ss.insertSheet(name);
-}
-
-/**
- * Reads all data from sourceSheet, partitions it into rows to keep and rows
- * to extract (based on keySet matching column A), writes the extract rows to
- * extractSheet, and overwrites sourceSheet with only the kept rows.
- *
- * All work is done in memory with bulk reads/writes for performance.
- *
- * @param {GoogleAppsScript.Spreadsheet.Sheet} sourceSheet
- * @param {Set<string>}                        keySet
- * @param {GoogleAppsScript.Spreadsheet.Sheet} extractSheet
- * @returns {{ before: number, kept: number, extracted: number }}
- */
-function extractRows(sourceSheet, keySet, extractSheet) {
-  const allData = sourceSheet.getDataRange().getValues();
-
-  // A sheet with no data rows (empty or header-only) has nothing to partition.
-  if (allData.length <= 1) {
-    Logger.log(sourceSheet.getName() + ': no data rows, nothing to do.');
-    return { before: 0, kept: 0, extracted: 0 };
-  }
-
-  const header   = allData[0];
-  const keepRows = [header];   // will go back into the source sheet
-  const extRows  = [header];   // will go into the extract sheet
-
-  for (let i = 1; i < allData.length; i++) {
-    const row = allData[i];
-    const key = normaliseKey(row[0]);
-
-    // Rows with no Company ID are always kept in the source sheet.
-    if (key === '') {
-      keepRows.push(row);
-      continue;
-    }
-
-    if (keySet.has(key)) {
-      extRows.push(row);
-    } else {
-      keepRows.push(row);
-    }
-  }
-
-  const before    = allData.length - 1;
-  const extracted = extRows.length  - 1;
-  const kept      = keepRows.length - 1;
-
-  Logger.log(sourceSheet.getName() + ': before=' + before +
-             ', kept=' + kept + ', extracted=' + extracted);
-
-  // Write extract data (header is always row 1).
-  extractSheet.getRange(1, 1, extRows.length, header.length).setValues(extRows);
-
-  // Overwrite source sheet with kept rows.
-  // clear() wipes content and formatting so no ghost data remains after
-  // the row count shrinks.
-  sourceSheet.clear();
-  sourceSheet.getRange(1, 1, keepRows.length, header.length).setValues(keepRows);
-
-  return { before, kept, extracted };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
