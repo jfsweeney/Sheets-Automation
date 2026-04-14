@@ -15,6 +15,13 @@
  * IMPORTANT: Make a backup copy of the spreadsheet before running.
  * The script clears and rewrites source sheets; there is no undo.
  *
+ * Filters and hidden rows/columns
+ * --------------------------------
+ * Before processing each sheet the script removes any active filter and
+ * unhides all rows and columns. This ensures the full dataset is read and
+ * written — not just what is currently visible. Filters will not be present
+ * on the rewritten sheets after the script completes.
+ *
  * Output
  * ------
  *   "Companies Extract" – Created (or replaced) with the Companies header
@@ -66,6 +73,9 @@ function splitSheetsByKey() {
     return;
   }
 
+  // Reveal all rows in the Keys sheet so hidden keys are not silently missed.
+  fullyRevealSheet(keysSheet);
+
   const keysRaw = keysSheet.getDataRange().getValues();
   const keySet  = new Set();
 
@@ -89,15 +99,22 @@ function splitSheetsByKey() {
   if (!companiesSheet) { ui.alert('Error: Sheet named "Companies" not found.'); return; }
   if (!censusesSheet)  { ui.alert('Error: Sheet named "Censuses" not found.');  return; }
 
-  // ── 3. Create extract sheets (replace if they already exist) ─────────────────
+  // ── 3. Remove filters and unhide everything in source sheets ─────────────────
+  // Filters or hidden rows/columns cause getDataRange() to return an incomplete
+  // dataset. Revealing everything now means the full data is read, partitioned,
+  // and written back — nothing is silently skipped or lost.
+  fullyRevealSheet(companiesSheet);
+  fullyRevealSheet(censusesSheet);
+
+  // ── 4. Create extract sheets (replace if they already exist) ─────────────────
   const companiesExtract = prepareExtractSheet(ss, 'Companies Extract');
   const censusesExtract  = prepareExtractSheet(ss, 'Censuses Extract');
 
-  // ── 4. Process each source sheet ────────────────────────────────────────────
+  // ── 5. Process each source sheet ────────────────────────────────────────────
   const companiesStats = extractRows(companiesSheet, keySet, companiesExtract);
   const censusesStats  = extractRows(censusesSheet,  keySet, censusesExtract);
 
-  // ── 5. Quality check and summary ────────────────────────────────────────────
+  // ── 6. Quality check and summary ────────────────────────────────────────────
   const totalBefore = companiesStats.before + censusesStats.before;
   const totalAfter  = companiesStats.kept   + companiesStats.extracted +
                       censusesStats.kept    + censusesStats.extracted;
@@ -123,6 +140,29 @@ function splitSheetsByKey() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Removes any active filter and shows all hidden rows and columns on a sheet.
+ *
+ * Filters and hidden rows/columns cause getDataRange().getValues() to return
+ * an incomplete dataset on some Google Sheets versions. Revealing everything
+ * before reading guarantees the script works on the full data.
+ *
+ * Note: filters are not restored after the script runs. The rewritten source
+ * sheets will have no filter applied.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ */
+function fullyRevealSheet(sheet) {
+  const filter = sheet.getFilter();
+  if (filter) {
+    filter.remove();
+    Logger.log(sheet.getName() + ': filter removed.');
+  }
+  sheet.showRows(1, sheet.getMaxRows());
+  sheet.showColumns(1, sheet.getMaxColumns());
+  Logger.log(sheet.getName() + ': all rows and columns unhidden.');
+}
 
 /**
  * Deletes any existing sheet with the given name and creates a fresh one.

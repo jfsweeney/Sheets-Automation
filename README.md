@@ -26,6 +26,16 @@ The script rewrites the Companies and Censuses sheets in place. Before running i
 
 Keep this backup until you are satisfied with the results.
 
+### Filters and hidden rows or columns
+
+If any of the Keys, Companies, or Censuses sheets have a filter applied or have hidden rows or columns, **the script will remove the filter and unhide everything automatically** before reading the data. This is necessary to ensure no rows are silently skipped.
+
+Be aware of two consequences:
+- **Filters will not be restored** on the rewritten sheets after the script runs.
+- **All previously hidden rows will be visible** in the resulting sheets.
+
+If you need your filters preserved, note them down before running so you can reapply them afterwards.
+
 ---
 
 ## What your workbook needs to contain
