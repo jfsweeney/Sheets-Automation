@@ -1,8 +1,16 @@
-# Sheets Automation — Split Sheet by Key
+# Sheets Automation — Carve-Off by Key
 
-This script splits a Google Sheets workbook into two by moving a specified set of company records out of the main data sheets and into separate extract sheets.
+This script performs a **carve-off** on a Google Sheets workbook — moving a specified set of company records out of the main data sheets and into separate carve-off sheets.
 
-Specifically, it reads a list of Company IDs you provide and moves all matching rows from the **Companies** and **Censuses** worksheets into two new worksheets called **Companies Extract** and **Censuses Extract**. Those rows are then deleted from the originals. Everything else is left untouched.
+Specifically, it reads a list of Company IDs you provide and moves all matching rows from the **Companies** and **Censuses** worksheets into two new worksheets called **Companies Carve-Off** and **Censuses Carve-Off**. Those rows are then deleted from the originals. Everything else is left untouched.
+
+---
+
+## Background
+
+In group benefits renewal quoting for a Professional Employer Organization (PEO), the full block of business often needs to be segmented into tranches — based on criteria such as group size, industry, renewal date, or claims history — for separate quoting treatment. Separating a subset of groups from the main block in this way is called a **carve-off** in the industry.
+
+This script automates that step. Once it completes, the workbook contains two clean, separated datasets: the carved-off groups and the remainder. Each can then be exported to its own file and run independently through the quoting decision intelligence engine.
 
 ---
 
@@ -46,7 +54,7 @@ The script expects these sheet tabs to exist (the names must match exactly, incl
 
 | Sheet name | What it contains |
 |---|---|
-| **Keys** | The list of Company IDs you want to move. Row 1 should be a header (e.g. "Company ID"). The IDs themselves start in row 2, one per row in column A. Duplicates in this list are fine — they are handled automatically. |
+| **Keys** | The list of Company IDs you want to carve off. Row 1 should be a header (e.g. "Company ID"). The IDs themselves start in row 2, one per row in column A. Duplicates in this list are fine — they are handled automatically. |
 | **Companies** | Your companies data. Row 1 must be a header row. Column A must be the Company ID. |
 | **Censuses** | Your census data. Row 1 must be a header row. Column A must be the Company ID. |
 
@@ -99,17 +107,17 @@ The script may take up to a minute or two to process large sheets. Do not close 
 When the script completes, a summary dialog reports how many rows were moved and includes a quality check:
 
 ```
-Split complete.
+Carve-off complete.
 
 Companies
   Remaining in sheet : 1842
-  Moved to extract   : 190
+  Moved to carve-off : 190
 
 Censuses
   Remaining in sheet : 34284
-  Moved to extract   : 716
+  Moved to carve-off : 716
 
-Quality check
+Quality check (populated rows)
   Total rows before  : 36332
   Total rows after   : 36332
   Result             : PASS
@@ -128,12 +136,12 @@ After a successful run your workbook will have (at minimum) these sheets:
 
 | Sheet | Contents |
 |---|---|
-| **Companies** | Original data minus the extracted rows |
-| **Censuses** | Original data minus the extracted rows |
-| **Companies Extract** | Header row from Companies + all extracted company rows |
-| **Censuses Extract** | Header row from Censuses + all extracted census rows |
+| **Companies** | Original data minus the carved-off rows |
+| **Censuses** | Original data minus the carved-off rows |
+| **Companies Carve-Off** | Header row from Companies + all carved-off company rows |
+| **Censuses Carve-Off** | Header row from Censuses + all carved-off census rows |
 
-If **Companies Extract** or **Censuses Extract** sheets already existed when you ran the script, they were replaced entirely.
+If **Companies Carve-Off** or **Censuses Carve-Off** sheets already existed when you ran the script, they were replaced entirely.
 
 ---
 

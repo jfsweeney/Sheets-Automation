@@ -1,13 +1,14 @@
 /**
  * splitSheetsByKey.gs
  *
- * Moves rows from the "Companies" and "Censuses" worksheets into new
- * "Companies Extract" and "Censuses Extract" worksheets, based on a list
- * of Company IDs stored in a "Keys" sheet.
+ * Performs a carve-off on a Google Sheets workbook: moves rows from the
+ * "Companies" and "Censuses" worksheets into new "Companies Carve-Off" and
+ * "Censuses Carve-Off" worksheets, based on a list of Company IDs stored in
+ * a "Keys" sheet.
  *
  * Prerequisites
  * -------------
- *   Keys      – Row 1 is a header. Company IDs to extract start in row 2,
+ *   Keys      – Row 1 is a header. Company IDs to carve off start in row 2,
  *               column A. Duplicates in this list are handled automatically.
  *   Companies – Row 1 is a header. Column A is Company ID (one row per ID).
  *   Censuses  – Row 1 is a header. Column A is Company ID (may repeat).
@@ -25,10 +26,10 @@
  *
  * Output
  * ------
- *   "Companies Extract" – Created (or replaced) with the Companies header
- *                         plus all rows whose Company ID was in Keys.
- *   "Censuses Extract"  – Created (or replaced) with the Censuses header
- *                         plus all rows whose Company ID was in Keys.
+ *   "Companies Carve-Off" – Created (or replaced) with the Companies header
+ *                           plus all rows whose Company ID was in Keys.
+ *   "Censuses Carve-Off"  – Created (or replaced) with the Censuses header
+ *                           plus all rows whose Company ID was in Keys.
  *   The matching rows are deleted from Companies and Censuses.
  *
  * Quality check
@@ -57,7 +58,7 @@ function splitSheetsByKey() {
 
   // ── Confirmation ────────────────────────────────────────────────────────────
   const confirm = ui.alert(
-    'Split sheets by key',
+    'Carve-off sheets by key',
     'IMPORTANT: Make a backup copy of this spreadsheet before continuing.\n\n' +
     'This script clears and rewrites the "Companies" and "Censuses" sheets. ' +
     'If it is interrupted after clearing but before writing back, data in ' +
@@ -127,23 +128,23 @@ function splitSheetsByKey() {
 
   // ── 5. Write all results ─────────────────────────────────────────────────────
   // ─── Point of no return ───────────────────────────────────────────────────
-  applyPartition(ss, companiesSheet, companiesPartition, 'Companies Extract');
-  applyPartition(ss, censusesSheet,  censusesPartition,  'Censuses Extract');
+  applyPartition(ss, companiesSheet, companiesPartition, 'Companies Carve-Off');
+  applyPartition(ss, censusesSheet,  censusesPartition,  'Censuses Carve-Off');
 
   // ── 6. Quality check and summary ────────────────────────────────────────────
-  const totalBefore = companiesPartition.before + censusesPartition.before;
-  const totalAfter  = companiesPartition.kept   + companiesPartition.extracted +
-                      censusesPartition.kept    + censusesPartition.extracted;
+  const totalBefore = companiesPartition.before   + censusesPartition.before;
+  const totalAfter  = companiesPartition.kept      + companiesPartition.carvedOff +
+                      censusesPartition.kept       + censusesPartition.carvedOff;
   const pass = totalBefore === totalAfter;
 
   const summary =
-    'Split complete.\n\n' +
+    'Carve-off complete.\n\n' +
     'Companies\n' +
     '  Remaining in sheet : ' + companiesPartition.kept      + '\n' +
-    '  Moved to extract   : ' + companiesPartition.extracted + '\n\n' +
+    '  Moved to carve-off : ' + companiesPartition.carvedOff + '\n\n' +
     'Censuses\n' +
     '  Remaining in sheet : ' + censusesPartition.kept       + '\n' +
-    '  Moved to extract   : ' + censusesPartition.extracted  + '\n\n' +
+    '  Moved to carve-off : ' + censusesPartition.carvedOff  + '\n\n' +
     'Quality check (populated rows)\n' +
     '  Total rows before  : ' + totalBefore + '\n' +
     '  Total rows after   : ' + totalAfter  + '\n' +
@@ -182,7 +183,7 @@ function fullyRevealSheet(sheet) {
 
 /**
  * Reads all data from sourceSheet and partitions it into rows to keep and
- * rows to extract. No data is written at this stage.
+ * rows to carve off. No data is written at this stage.
  *
  * Cross-check: compares getLastRow() against the row count returned by
  * getDataRange().getValues(). These use different internal paths; a mismatch
@@ -190,12 +191,12 @@ function fullyRevealSheet(sheet) {
  * risk silent data loss.
  *
  * Only populated rows (at least one non-empty cell) are counted in the
- * before/kept/extracted statistics. Fully-empty rows are preserved in
+ * before/kept/carvedOff statistics. Fully-empty rows are preserved in
  * keepRows so they survive in the source sheet, but are not counted.
  *
  * @param {GoogleAppsScript.Spreadsheet.Sheet} sourceSheet
  * @param {Set<string>}                        keySet
- * @returns {{ header, keepRows, extRows, before, kept, extracted }}
+ * @returns {{ header, keepRows, carveOffRows, before, kept, carvedOff }}
  */
 function partitionSheet(sourceSheet, keySet) {
   const lastRow = sourceSheet.getLastRow();
@@ -203,7 +204,7 @@ function partitionSheet(sourceSheet, keySet) {
   // Completely empty sheet — nothing to partition.
   if (lastRow === 0) {
     Logger.log(sourceSheet.getName() + ': sheet is completely empty.');
-    return { header: [], keepRows: [], extRows: [], before: 0, kept: 0, extracted: 0 };
+    return { header: [], keepRows: [], carveOffRows: [], before: 0, kept: 0, carvedOff: 0 };
   }
 
   const allData = sourceSheet.getDataRange().getValues();
@@ -223,13 +224,13 @@ function partitionSheet(sourceSheet, keySet) {
   if (allData.length <= 1) {
     const header = allData[0];
     Logger.log(sourceSheet.getName() + ': no data rows, nothing to do.');
-    return { header, keepRows: [header], extRows: [header], before: 0, kept: 0, extracted: 0 };
+    return { header, keepRows: [header], carveOffRows: [header], before: 0, kept: 0, carvedOff: 0 };
   }
 
-  const header   = allData[0];
-  const keepRows = [header];
-  const extRows  = [header];
-  let before = 0, kept = 0, extracted = 0;
+  const header      = allData[0];
+  const keepRows    = [header];
+  const carveOffRows = [header];
+  let before = 0, kept = 0, carvedOff = 0;
 
   for (let i = 1; i < allData.length; i++) {
     const row = allData[i];
@@ -252,8 +253,8 @@ function partitionSheet(sourceSheet, keySet) {
     }
 
     if (keySet.has(key)) {
-      extRows.push(row);
-      extracted++;
+      carveOffRows.push(row);
+      carvedOff++;
     } else {
       keepRows.push(row);
       kept++;
@@ -261,14 +262,15 @@ function partitionSheet(sourceSheet, keySet) {
   }
 
   Logger.log(sourceSheet.getName() + ': before=' + before +
-             ', kept=' + kept + ', extracted=' + extracted);
+             ', kept=' + kept + ', carvedOff=' + carvedOff);
 
-  return { header, keepRows, extRows, before, kept, extracted };
+  return { header, keepRows, carveOffRows, before, kept, carvedOff };
 }
 
 /**
  * Writes a completed partition to the spreadsheet:
- *   - Creates (or replaces) the named extract sheet and fills it with extRows.
+ *   - Creates (or replaces) the named carve-off sheet and fills it with
+ *     carveOffRows.
  *   - Clears the source sheet and writes back only the kept rows.
  *
  * This is called only after both source sheets have been successfully
@@ -276,17 +278,17 @@ function partitionSheet(sourceSheet, keySet) {
  *
  * @param {GoogleAppsScript.Spreadsheet.Spreadsheet}  ss
  * @param {GoogleAppsScript.Spreadsheet.Sheet}        sourceSheet
- * @param {{ header, keepRows, extRows }}              partition
- * @param {string}                                     extractName
+ * @param {{ header, keepRows, carveOffRows }}         partition
+ * @param {string}                                     carveOffName
  */
-function applyPartition(ss, sourceSheet, partition, extractName) {
-  const { header, keepRows, extRows } = partition;
+function applyPartition(ss, sourceSheet, partition, carveOffName) {
+  const { header, keepRows, carveOffRows } = partition;
 
   // Nothing to write for a completely empty sheet.
   if (!header || header.length === 0) return;
 
-  const extSheet = prepareExtractSheet(ss, extractName);
-  extSheet.getRange(1, 1, extRows.length, header.length).setValues(extRows);
+  const carveOffSheet = prepareCarveOffSheet(ss, carveOffName);
+  carveOffSheet.getRange(1, 1, carveOffRows.length, header.length).setValues(carveOffRows);
 
   // clear() removes content and formatting so no ghost data lingers after
   // the row count shrinks.
@@ -301,7 +303,7 @@ function applyPartition(ss, sourceSheet, partition, extractName) {
  * @param {string} name
  * @returns {GoogleAppsScript.Spreadsheet.Sheet}
  */
-function prepareExtractSheet(ss, name) {
+function prepareCarveOffSheet(ss, name) {
   const existing = ss.getSheetByName(name);
   if (existing) ss.deleteSheet(existing);
   return ss.insertSheet(name);
