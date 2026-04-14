@@ -12,6 +12,9 @@
  *   Companies – Row 1 is a header. Column A is Company ID (one row per ID).
  *   Censuses  – Row 1 is a header. Column A is Company ID (may repeat).
  *
+ * IMPORTANT: Make a backup copy of the spreadsheet before running.
+ * The script clears and rewrites source sheets; there is no undo.
+ *
  * Output
  * ------
  *   "Companies Extract" – Created (or replaced) with the Companies header
@@ -26,9 +29,10 @@
  *
  * How to run
  * ----------
- *   1. Open the Google Sheet.
- *   2. Extensions > Apps Script, paste this file, save.
- *   3. Select the splitSheetsByKey function and click Run.
+ *   1. Make a backup copy of the spreadsheet.
+ *   2. Open the Google Sheet.
+ *   3. Extensions > Apps Script, paste this file, save.
+ *   4. Select the splitSheetsByKey function and click Run.
  *      (You will be asked to grant permissions the first time.)
  */
 
@@ -43,8 +47,11 @@ function splitSheetsByKey() {
   // ── Confirmation ────────────────────────────────────────────────────────────
   const confirm = ui.alert(
     'Split sheets by key',
-    'This will move rows from "Companies" and "Censuses" into new extract ' +
-    'sheets and delete them from the originals.\n\nContinue?',
+    'IMPORTANT: Make a backup copy of this spreadsheet before continuing.\n\n' +
+    'This script clears and rewrites the "Companies" and "Censuses" sheets. ' +
+    'If it is interrupted after clearing but before writing back, data in ' +
+    'those sheets will be lost. There is no undo.\n\n' +
+    'Have you made a backup? Continue?',
     ui.ButtonSet.YES_NO
   );
   if (confirm !== ui.Button.YES) {
@@ -82,11 +89,15 @@ function splitSheetsByKey() {
   if (!companiesSheet) { ui.alert('Error: Sheet named "Companies" not found.'); return; }
   if (!censusesSheet)  { ui.alert('Error: Sheet named "Censuses" not found.');  return; }
 
-  // ── 3. Process each source sheet ────────────────────────────────────────────
-  const companiesStats = extractRows(ss, companiesSheet, keySet, 'Companies Extract');
-  const censusesStats  = extractRows(ss, censusesSheet,  keySet, 'Censuses Extract');
+  // ── 3. Create extract sheets (replace if they already exist) ─────────────────
+  const companiesExtract = prepareExtractSheet(ss, 'Companies Extract');
+  const censusesExtract  = prepareExtractSheet(ss, 'Censuses Extract');
 
-  // ── 4. Quality check and summary ────────────────────────────────────────────
+  // ── 4. Process each source sheet ────────────────────────────────────────────
+  const companiesStats = extractRows(companiesSheet, keySet, companiesExtract);
+  const censusesStats  = extractRows(censusesSheet,  keySet, censusesExtract);
+
+  // ── 5. Quality check and summary ────────────────────────────────────────────
   const totalBefore = companiesStats.before + censusesStats.before;
   const totalAfter  = companiesStats.kept   + companiesStats.extracted +
                       censusesStats.kept    + censusesStats.extracted;
@@ -110,27 +121,40 @@ function splitSheetsByKey() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Core helper
+// Helpers
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Deletes any existing sheet with the given name and creates a fresh one.
+ *
+ * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss
+ * @param {string} name
+ * @returns {GoogleAppsScript.Spreadsheet.Sheet}
+ */
+function prepareExtractSheet(ss, name) {
+  const existing = ss.getSheetByName(name);
+  if (existing) ss.deleteSheet(existing);
+  return ss.insertSheet(name);
+}
 
 /**
  * Reads all data from sourceSheet, partitions it into rows to keep and rows
  * to extract (based on keySet matching column A), writes the extract rows to
- * a new sheet, and overwrites the source sheet with only the kept rows.
+ * extractSheet, and overwrites sourceSheet with only the kept rows.
  *
  * All work is done in memory with bulk reads/writes for performance.
  *
- * @param {GoogleAppsScript.Spreadsheet.Spreadsheet} ss
- * @param {GoogleAppsScript.Spreadsheet.Sheet}       sourceSheet
- * @param {Set<string>}                              keySet
- * @param {string}                                   extractName
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sourceSheet
+ * @param {Set<string>}                        keySet
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} extractSheet
  * @returns {{ before: number, kept: number, extracted: number }}
  */
-function extractRows(ss, sourceSheet, keySet, extractName) {
+function extractRows(sourceSheet, keySet, extractSheet) {
   const allData = sourceSheet.getDataRange().getValues();
 
-  if (allData.length === 0) {
-    Logger.log(sourceSheet.getName() + ': empty, nothing to do.');
+  // A sheet with no data rows (empty or header-only) has nothing to partition.
+  if (allData.length <= 1) {
+    Logger.log(sourceSheet.getName() + ': no data rows, nothing to do.');
     return { before: 0, kept: 0, extracted: 0 };
   }
 
@@ -140,7 +164,15 @@ function extractRows(ss, sourceSheet, keySet, extractName) {
 
   for (let i = 1; i < allData.length; i++) {
     const row = allData[i];
-    if (keySet.has(normaliseKey(row[0]))) {
+    const key = normaliseKey(row[0]);
+
+    // Rows with no Company ID are always kept in the source sheet.
+    if (key === '') {
+      keepRows.push(row);
+      continue;
+    }
+
+    if (keySet.has(key)) {
       extRows.push(row);
     } else {
       keepRows.push(row);
@@ -154,20 +186,14 @@ function extractRows(ss, sourceSheet, keySet, extractName) {
   Logger.log(sourceSheet.getName() + ': before=' + before +
              ', kept=' + kept + ', extracted=' + extracted);
 
-  // ── Write extract sheet ──────────────────────────────────────────────────
-  // Delete any pre-existing extract sheet so we start clean.
-  const existing = ss.getSheetByName(extractName);
-  if (existing) ss.deleteSheet(existing);
+  // Write extract data (header is always row 1).
+  extractSheet.getRange(1, 1, extRows.length, header.length).setValues(extRows);
 
-  const extSheet = ss.insertSheet(extractName);
-  extSheet.getRange(1, 1, extRows.length, header.length).setValues(extRows);
-
-  // ── Overwrite source sheet with kept rows ────────────────────────────────
-  // clear() wipes content and formatting so no ghost data remains.
+  // Overwrite source sheet with kept rows.
+  // clear() wipes content and formatting so no ghost data remains after
+  // the row count shrinks.
   sourceSheet.clear();
-  if (keepRows.length > 0) {
-    sourceSheet.getRange(1, 1, keepRows.length, header.length).setValues(keepRows);
-  }
+  sourceSheet.getRange(1, 1, keepRows.length, header.length).setValues(keepRows);
 
   return { before, kept, extracted };
 }
@@ -178,7 +204,7 @@ function extractRows(ss, sourceSheet, keySet, extractName) {
 
 /**
  * Converts a cell value to a trimmed string for consistent key comparison.
- * Numeric IDs (e.g. 12345) and string IDs (e.g. "12345") will match.
+ * Alphanumeric IDs stored as text or small integers are handled correctly.
  *
  * @param  {*}      value
  * @returns {string}
