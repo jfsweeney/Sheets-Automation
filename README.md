@@ -1,6 +1,6 @@
-# Sheets Automation — Carve-Off by Key
+# Sheets Automation — Split Sheets by Key
 
-This script performs a **carve-off** on a Google Sheets workbook — moving a specified set of company records out of the main data sheets and into separate carve-off sheets.
+This script splits the data on worksheets within on a Google Sheets workbook — moving a specified set of company records out of the main data sheets and into separate carve-off sheets.
 
 Specifically, it reads a list of Company IDs you provide and moves all matching rows from the **Companies** and **Censuses** worksheets into two new worksheets called **Companies Carve-Off** and **Censuses Carve-Off**. Those rows are then deleted from the originals. Everything else is left untouched.
 
@@ -8,7 +8,7 @@ Specifically, it reads a list of Company IDs you provide and moves all matching 
 
 ## Background
 
-In group benefits renewal quoting for a Professional Employer Organization (PEO), the full block of business often needs to be segmented into tranches — based on criteria such as group size, industry, renewal date, or claims history — for separate quoting treatment. Separating a subset of groups from the main block in this way is called a **carve-off** in the industry.
+In group benefits renewal quoting for a Professional Employer Organization (PEO), the full block of business often needs to be segmented into tranches (based on criteria such as group size, industry, renewal date, or location) for separate quoting treatment. Separating a subset of groups from the main block in this way is called a **carve-off**.
 
 This script automates that step. Once it completes, the workbook contains two clean, separated datasets: the carved-off groups and the remainder. Each can then be exported to its own file and run independently through the quoting decision intelligence engine.
 
